@@ -1,5 +1,3 @@
-task.wait(3) -- Group 1: Map modifications
-
 --[[
     RemoveBorders
     Purpose: Remove ONLY invisible borders and add walkable ramps on green edges

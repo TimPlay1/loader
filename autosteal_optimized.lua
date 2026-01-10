@@ -5,8 +5,6 @@
     [PROTECTED] - Использует gethui() для обхода античита
 ]]
 
-task.wait(4) -- Group 1: Core/Protection (4 sec delay)
-
 -- ============== SERVICES ==============
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")

@@ -1,5 +1,3 @@
-task.wait(5) -- Group 2: UI/Effects (5 sec delay)
-
 --[[
     Camera Effects Disabler
     Автоматически отключает все эффекты камеры при инжекте:

@@ -1,5 +1,3 @@
-task.wait(4) -- Group 1: Core/Protection (4 sec delay)
-
 -- Advanced Killaura Script with GUI and Configuration
 -- Features: Auto-detect enemies, equip tools, aim, ESP beam, auto-rotate character
 local Players = game:GetService("Players")

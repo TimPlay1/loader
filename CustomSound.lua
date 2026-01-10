@@ -1,5 +1,3 @@
-task.wait(6) -- Group 3: External/Misc (6 sec delay)
-
 --[[
     Custom Sound Replacer v2.0
     Заменяет игровые звуки на кастомные из локальной папки

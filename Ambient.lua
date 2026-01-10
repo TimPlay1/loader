@@ -1,5 +1,3 @@
-task.wait(5) -- Group 2: UI/Effects (5 sec delay)
-
 --[[
     Ambient Controller (Optimized)
     Purpose: Custom skybox, lighting control, color picker GUI

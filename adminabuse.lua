@@ -1,5 +1,3 @@
-task.wait(4) -- Group 1: Core/Protection (4 sec delay)
-
 --[[
     Admin Abuse v1.0 - Автоматическое использование админ команд на воре
     + Отслеживает игрока который несёт лучший brainrot
