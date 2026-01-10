@@ -11,7 +11,7 @@ local Players = game:GetService("Players")
 
 -- ============== CONFIGURATION ==============
 local CONFIG_FILE = "ody_loader_config.json"
-local BASE_URL = "https://ody.farm/scripts/"
+local BASE_URL = "https://scripts.ody.farm/"
 
 -- Available scripts with their load order (lower = loads first)
 local AVAILABLE_SCRIPTS = {
