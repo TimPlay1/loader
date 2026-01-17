@@ -1,9 +1,11 @@
 --[[
-    ODY.FARM Farm Script Loader
+    ODY.FARM Farm Script Loader v1.1
     Automatically creates config file and loads enabled farm scripts from ody.farm
     
     Config file: ody_farm_loader_config.json (in exploit workspace)
     All scripts are enabled by default
+    
+    v1.1: Added safe_mode toggle (sync only, no farming)
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -21,14 +23,24 @@ local AVAILABLE_SCRIPTS = {
     { id = "panel_sync", name = "Panel Sync", file = "panel_sync.lua", order = 4, enabled = true },
 }
 
+-- Global settings (not per-script toggles)
+local GLOBAL_SETTINGS = {
+    safe_mode = false, -- When true: only sync brainrots to panel, no farming/stealing
+}
+
 -- ============== CONFIG MANAGEMENT ==============
 
 local function loadConfig()
     local config = {}
     
-    -- Set defaults
+    -- Set defaults for scripts
     for _, script in ipairs(AVAILABLE_SCRIPTS) do
         config[script.id] = script.enabled
+    end
+    
+    -- Set defaults for global settings
+    for key, value in pairs(GLOBAL_SETTINGS) do
+        config[key] = value
     end
     
     -- Try to load existing config
@@ -39,9 +51,7 @@ local function loadConfig()
             
             -- Merge with defaults
             for key, value in pairs(saved) do
-                if config[key] ~= nil then
-                    config[key] = value
-                end
+                config[key] = value
             end
         end
     end)
@@ -63,8 +73,14 @@ end
 local function createDefaultConfig()
     local config = {}
     
+    -- Scripts
     for _, script in ipairs(AVAILABLE_SCRIPTS) do
         config[script.id] = script.enabled
+    end
+    
+    -- Global settings
+    for key, value in pairs(GLOBAL_SETTINGS) do
+        config[key] = value
     end
     
     saveConfig(config)
@@ -119,6 +135,14 @@ local function main()
     else
         config = createDefaultConfig()
         print("[Farm Loader] Created default config at " .. CONFIG_FILE)
+    end
+    
+    -- Apply global settings to _G for other scripts to read
+    _G.FarmLoaderSettings = _G.FarmLoaderSettings or {}
+    _G.FarmLoaderSettings.safe_mode = config.safe_mode or false
+    
+    if config.safe_mode then
+        print("[Farm Loader] ⚠️ SAFE MODE ENABLED - sync only, no farming")
     end
     
     -- Sort scripts by load order

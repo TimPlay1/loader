@@ -7,8 +7,10 @@
 -- ============ SAFE MODE (БЕЗОПАСНЫЙ РЕЖИМ) ============
 -- Когда включён - скрипт ТОЛЬКО собирает информацию о brainrots
 -- и отправляет её в панель. Никакого фарминга, кражи и движения!
--- Переключите на true для активации безопасного режима.
-local SAFE_MODE = false -- <<< ПЕРЕКЛЮЧАТЕЛЬ БЕЗОПАСНОГО РЕЖИМА
+-- Можно переключить через:
+-- 1. ody_farm_loader_config.json -> "safe_mode": true
+-- 2. Или вручную здесь: local SAFE_MODE = true
+local SAFE_MODE = (_G.FarmLoaderSettings and _G.FarmLoaderSettings.safe_mode) or false
 -- ============ END SAFE MODE ============
 
 -- ВАЖНО: Ждём 5 секунд чтобы игра полностью загрузилась
