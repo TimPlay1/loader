@@ -1,10 +1,13 @@
 --[[
-    Panel Sync Script v1.2
+    Panel Sync Script v1.3
     Читает локальные файлы brainrots_*.json и синхронизирует с веб-панелью
     Запускается отдельно от farm.lua - собирает данные ВСЕХ фермеров
     
     КООРДИНАЦИЯ: Использует lock-файл чтобы несколько инстансов не отправляли
     данные одновременно. Только один инстанс отправляет раз в 3 секунды.
+    
+    v1.3 FIX: Не синкает пустые данные (0 brainrots, 0 income) чтобы
+    не перезаписывать хорошие данные на сервере при раннем старте
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -199,24 +202,34 @@ local function collectMyAccountData()
         return nil
     end
     
+    -- v1.3: ЗАЩИТА от отправки пустых данных
+    -- Не синкаем если brainrots пустой - это может быть до первого сканирования
+    local brainrots = data.brainrots or {}
+    local totalIncome = data.totalIncome or 0
+    
+    if #brainrots == 0 and totalIncome == 0 then
+        print("[PanelSync] ⚠️ SKIP: brainrots empty and income=0 for " .. LocalPlayer.Name .. " - waiting for first scan")
+        return nil
+    end
+    
     -- Для текущего аккаунта всегда isOnline = true
     local accountData = {
         playerName = data.playerName or LocalPlayer.Name,
         userId = data.userId or LocalPlayer.UserId,
         lastUpdate = data.lastUpdate or os.date("%Y-%m-%d %H:%M:%S"),
-        totalBrainrots = data.totalBrainrots or 0,
+        totalBrainrots = data.totalBrainrots or #brainrots,
         maxSlots = data.maxSlots or 10,
-        totalIncome = data.totalIncome or 0,
+        totalIncome = totalIncome,
         totalIncomeFormatted = data.totalIncomeFormatted or "0/s",
         isOnline = true, -- Текущий аккаунт всегда онлайн
         status = data.status or "idle",
         action = data.action or "",
         farmEnabled = data.farmEnabled or false,
         farmRunning = data.farmRunning or false,
-        brainrots = data.brainrots or {}
+        brainrots = brainrots
     }
     
-    print("[PanelSync] Account: " .. accountData.playerName .. " | Income: " .. accountData.totalIncomeFormatted)
+    print("[PanelSync] Account: " .. accountData.playerName .. " | Brainrots: " .. #brainrots .. " | Income: " .. accountData.totalIncomeFormatted)
     print("[PanelSync] Current local time: " .. os.date("%Y-%m-%d %H:%M:%S"))
     
     return accountData
