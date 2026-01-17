@@ -1,6 +1,7 @@
 --[[
-    Brainrot Farm v2.1
+    Brainrot Farm v2.2
     With Panel Sync Support
+    Updated: 2026-01-17
 ]]
 
 -- ============ SAFE MODE (БЕЗОПАСНЫЙ РЕЖИМ) ============
