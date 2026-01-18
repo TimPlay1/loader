@@ -1,3 +1,5 @@
+task.wait(4) -- Group 1: Core/Protection (4 sec delay)
+
 -- Advanced Killaura Script with GUI and Configuration
 -- Features: Auto-detect enemies, equip tools, aim, ESP beam, auto-rotate character
 local Players = game:GetService("Players")
@@ -126,7 +128,8 @@ local Config = {
     FriendListGuiOpen = false,  -- Состояние окна френд-листа
     ToggleKeybind = "K",  -- Клавиша для вкл/выкл килауры (по умолчанию K)
     DisableOnReinject = false,  -- Выключать скрипт при реинжекте (перезаходе в игру)
-    AutoEnableOnThief = true  -- Автоматически включать при обнаружении вора базы
+    AutoEnableOnThief = true,  -- Автоматически включать при обнаружении вора базы
+    FriendSafeMode = true  -- Защитный режим: отключать AoE при друге в 100м, все циклы при друге в 50м
 }
 
 -- ═══════════════════════════════════════════════════════════════════════
@@ -137,6 +140,27 @@ local AutoEnableState = {
     AutoEnabledForMyBaseThief = false,
     LastMyBaseThiefDetected = nil,
 }
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- FRIEND SAFE MODE STATE (защитный режим при обнаружении друзей)
+-- ═══════════════════════════════════════════════════════════════════════
+local FriendSafeState = {
+    NearestFriend = nil,       -- Ближайший друг (player)
+    NearestFriendDistance = math.huge,  -- Расстояние до него
+    FriendBeam = nil,          -- Бим к другу
+    FriendBeamAtt0 = nil,      -- Attachment на нас
+    FriendBeamAtt1 = nil,      -- Attachment на друге
+    LastBeamUpdate = 0,        -- Время последнего обновления
+    BeamBlinkTime = 0,         -- Для мигания бима
+    AoEDisabled = false,       -- AoE отключены (друг в 100м)
+    FullRestriction = false,   -- Полное ограничение (друг в 50м)
+}
+
+-- Константы для Friend Safe Mode
+local FRIEND_AOE_DISABLE_RADIUS = 100  -- Радиус отключения AoE
+local FRIEND_FULL_RESTRICTION_RADIUS = 50  -- Радиус полного ограничения
+local FRIEND_CLOSE_COMBAT_RADIUS = 10  -- Радиус ближнего боя перчатками
+local FRIEND_BEAM_UPDATE_INTERVAL = 0.1  -- Интервал обновления бима
 
 -- Keybind state
 local KeybindState = {
@@ -790,6 +814,182 @@ local function IsInFriendList(player)
     
     local userId = tostring(player.UserId)
     return FriendList[userId] ~= nil
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- FRIEND SAFE MODE FUNCTIONS (поиск друзей и управление бимом)
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Найти ближайшего друга из FriendList
+-- ВАЖНО: При нескольких друзьях выбирается БЛИЖАЙШИЙ для определения режима
+-- Если хоть один друг в радиусе 100м - AoE блокируются
+-- Если хоть один друг в радиусе 50м - полное ограничение (только перчатки 10м)
+-- Бим рисуется ТОЛЬКО к ближайшему другу
+local function FindNearestFriend()
+    local character = LocalPlayer.Character
+    if not character then
+        return nil, math.huge
+    end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then
+        return nil, math.huge
+    end
+    
+    local nearestFriend = nil
+    local nearestDistance = math.huge
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and IsInFriendList(player) then
+            local friendChar = player.Character
+            if friendChar then
+                local friendRoot = friendChar:FindFirstChild("HumanoidRootPart")
+                local friendHumanoid = friendChar:FindFirstChildOfClass("Humanoid")
+                
+                if friendRoot and friendHumanoid and friendHumanoid.Health > 0 then
+                    local distance = (rootPart.Position - friendRoot.Position).Magnitude
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestFriend = player
+                    end
+                end
+            end
+        end
+    end
+    
+    return nearestFriend, nearestDistance
+end
+
+-- Удалить бим к другу
+local function RemoveFriendBeam()
+    if FriendSafeState.FriendBeam then
+        pcall(function() FriendSafeState.FriendBeam:Destroy() end)
+        FriendSafeState.FriendBeam = nil
+    end
+    if FriendSafeState.FriendBeamAtt0 then
+        pcall(function() FriendSafeState.FriendBeamAtt0:Destroy() end)
+        FriendSafeState.FriendBeamAtt0 = nil
+    end
+    if FriendSafeState.FriendBeamAtt1 then
+        pcall(function() FriendSafeState.FriendBeamAtt1:Destroy() end)
+        FriendSafeState.FriendBeamAtt1 = nil
+    end
+end
+
+-- Создать бим к другу (зеленый, тонкий, мигающий)
+local function CreateFriendBeam(friendPlayer)
+    if not Config.FriendSafeMode then return end
+    if not friendPlayer then return end
+    
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local friendChar = friendPlayer.Character
+    if not friendChar then return end
+    
+    local friendRoot = friendChar:FindFirstChild("HumanoidRootPart")
+    if not friendRoot then return end
+    
+    -- Удаляем старый бим если есть
+    RemoveFriendBeam()
+    
+    -- Создаем attachments
+    local att0 = Instance.new("Attachment")
+    att0.Name = "FriendBeamAttachment0"
+    att0.Position = Vector3.new(0, 2, 0)
+    att0.Parent = rootPart
+    
+    local att1 = Instance.new("Attachment")
+    att1.Name = "FriendBeamAttachment1"
+    att1.Position = Vector3.new(0, 2, 0)
+    att1.Parent = friendRoot
+    
+    -- Создаем яркий зеленый бим (более заметный)
+    local beam = Instance.new("Beam")
+    beam.Name = "FriendSafeBeam"
+    beam.Color = ColorSequence.new(Color3.fromRGB(50, 255, 100))  -- Ярко-зеленый
+    beam.Width0 = 0.35  -- Увеличенная толщина
+    beam.Width1 = 0.35
+    beam.FaceCamera = true
+    beam.Transparency = NumberSequence.new(0)  -- Полностью непрозрачный
+    beam.LightEmission = 1
+    beam.LightInfluence = 0
+    beam.Brightness = 2  -- Дополнительная яркость
+    beam.Attachment0 = att0
+    beam.Attachment1 = att1
+    beam.Parent = rootPart
+    
+    FriendSafeState.FriendBeam = beam
+    FriendSafeState.FriendBeamAtt0 = att0
+    FriendSafeState.FriendBeamAtt1 = att1
+end
+
+-- Обновить бим к другу (мигание)
+local function UpdateFriendBeam()
+    if not Config.FriendSafeMode then
+        RemoveFriendBeam()
+        return
+    end
+    
+    local currentTime = tick()
+    
+    -- Throttle обновления
+    if currentTime - FriendSafeState.LastBeamUpdate < FRIEND_BEAM_UPDATE_INTERVAL then
+        return
+    end
+    FriendSafeState.LastBeamUpdate = currentTime
+    
+    -- Ищем ближайшего друга
+    local friend, distance = FindNearestFriend()
+    FriendSafeState.NearestFriend = friend
+    FriendSafeState.NearestFriendDistance = distance
+    
+    -- Определяем режимы ограничений
+    FriendSafeState.AoEDisabled = (friend ~= nil and distance <= FRIEND_AOE_DISABLE_RADIUS)
+    FriendSafeState.FullRestriction = (friend ~= nil and distance <= FRIEND_FULL_RESTRICTION_RADIUS)
+    
+    -- Показываем бим только если друг в радиусе 100м
+    if friend and distance <= FRIEND_AOE_DISABLE_RADIUS then
+        -- Проверяем нужно ли пересоздать бим (новый друг)
+        if FriendSafeState.FriendBeam then
+            -- Проверяем что attachments на правильных объектах
+            local friendRoot = friend.Character and friend.Character:FindFirstChild("HumanoidRootPart")
+            if friendRoot and FriendSafeState.FriendBeamAtt1 and FriendSafeState.FriendBeamAtt1.Parent ~= friendRoot then
+                CreateFriendBeam(friend)
+            end
+        else
+            CreateFriendBeam(friend)
+        end
+        
+        -- Мигание бима (яркое)
+        if FriendSafeState.FriendBeam then
+            FriendSafeState.BeamBlinkTime = FriendSafeState.BeamBlinkTime + FRIEND_BEAM_UPDATE_INTERVAL
+            local blinkPhase = math.sin(FriendSafeState.BeamBlinkTime * 8)  -- Быстрее мигание
+            local transparency = 0 + (blinkPhase + 1) * 0.15  -- 0 - 0.3 прозрачность (ярче)
+            local widthPulse = 0.35 + (blinkPhase + 1) * 0.1  -- Пульсация толщины
+            FriendSafeState.FriendBeam.Transparency = NumberSequence.new(transparency)
+            FriendSafeState.FriendBeam.Width0 = widthPulse
+            FriendSafeState.FriendBeam.Width1 = widthPulse
+            
+            -- Меняем цвет в зависимости от режима
+            if FriendSafeState.FullRestriction then
+                -- Ярко-желтый/оранжевый при полном ограничении (50м)
+                local greenValue = math.floor(180 + blinkPhase * 75)
+                FriendSafeState.FriendBeam.Color = ColorSequence.new(Color3.fromRGB(255, greenValue, 0))
+            else
+                -- Ярко-зеленый при частичном ограничении (100м)
+                local greenValue = math.floor(220 + blinkPhase * 35)
+                FriendSafeState.FriendBeam.Color = ColorSequence.new(Color3.fromRGB(50, greenValue, 80))
+            end
+        end
+    else
+        -- Друг вне зоны - удаляем бим
+        RemoveFriendBeam()
+        FriendSafeState.BeamBlinkTime = 0
+    end
 end
 
 -- Save configuration to file
@@ -2793,6 +2993,15 @@ local function CheckAndUseAoEItems()
     -- СТРОГИЙ THROTTLE: не проверяем AoE слишком часто
     local currentTime = tick()
     
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE: Блокировка AoE при друге в радиусе 100м
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE: Блокировка AoE при друге в радиусе 100м
+    -- НАПРАВЛЕННЫЕ предметы (Bee Launcher, Laser Cape, Taser Gun) РАЗРЕШЕНЫ!
+    -- ═══════════════════════════════════════════════════════════════════════
+    local friendSafeBlockAoE = Config.FriendSafeMode and FriendSafeState.AoEDisabled
+    -- При friendSafeBlockAoE = true блокируем все кроме направленных (Bee, Laser Cape, Taser)
+    
     -- НОВОЕ: Проверяем есть ли телепортированная вражеская турель
     local hasTeleportedSentry = false
     for sentry, data in pairs(TrackedEnemySentries) do
@@ -2896,7 +3105,8 @@ local function CheckAndUseAoEItems()
     -- Асинхронные предметы (Rage Table, Heatseeker, Attack Doge) проверяются отдельно ниже
     
     -- Try Medusa's Head first (priority 1) - need 1+ enemies within 15 studs
-    if not blockSyncItems and enemiesForMedusa >= 1 then
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
+    if not blockSyncItems and not friendSafeBlockAoE and enemiesForMedusa >= 1 then
         local medusaCooldown = GetItemCooldown("Medusa's Head")
         local medusaLastUse = LastAoEUseTime["Medusa's Head"] or 0
         local timeSinceLastMedusaUse = currentTime - medusaLastUse
@@ -2915,7 +3125,8 @@ local function CheckAndUseAoEItems()
     end
     
     -- Try Boogie Bomb (priority 2, independent cooldown) - need 1+ enemies within 25 studs
-    if not blockSyncItems and enemiesForBoogie >= 1 then
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
+    if not blockSyncItems and not friendSafeBlockAoE and enemiesForBoogie >= 1 then
         local boogieCooldown = GetItemCooldown("Boogie Bomb")
         local boogieLastUse = LastAoEUseTime["Boogie Bomb"] or 0
         local timeSinceLastBoogieUse = currentTime - boogieLastUse
@@ -2937,6 +3148,7 @@ local function CheckAndUseAoEItems()
     -- Use sentry if:
     -- 1. Less than 2 enemies (1 enemy): Check if sentry is destroyed AND check cooldown
     -- 2. 2+ enemies: Only check cooldown (ignore if sentry exists or not)
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
     
     local sentryStillExists = IsSentryStillPlaced()
     local shouldPlaceSentry = false
@@ -2951,7 +3163,7 @@ local function CheckAndUseAoEItems()
         end
     end
     
-    if not blockSyncItems and shouldPlaceSentry then
+    if not blockSyncItems and not friendSafeBlockAoE and shouldPlaceSentry then
         local sentryItem = FindAoEItem("All Seeing Sentry")
         if not sentryItem then
             return  -- No sentry item in inventory
@@ -3007,6 +3219,7 @@ local function CheckAndUseAoEItems()
     end
     
     -- Try Taser Gun (priority 5, independent cooldown) - need 1+ enemies within 18 studs
+    -- НАПРАВЛЕННЫЙ предмет - РАЗРЕШЕН в Friend Safe Mode!
     if not blockSyncItems and enemiesForTaser >= 1 then
         local taserCooldown = GetItemCooldown("Taser Gun")
         local taserLastUse = LastAoEUseTime["Taser Gun"] or 0
@@ -3026,6 +3239,7 @@ local function CheckAndUseAoEItems()
     end
     
     -- Try Bee Launcher (priority 6, independent cooldown) - need 1+ enemies within 28 studs
+    -- НАПРАВЛЕННЫЙ предмет - РАЗРЕШЕН в Friend Safe Mode!
     if not blockSyncItems and enemiesForBee >= 1 then
         local beeCooldown = GetItemCooldown("Bee Launcher")
         local beeLastUse = LastAoEUseTime["Bee Launcher"] or 0
@@ -3046,6 +3260,7 @@ local function CheckAndUseAoEItems()
     
     -- Try Laser Cape (priority 7, independent cooldown) - need 1+ enemies within 60 studs
     -- Works independently beyond 40m, works with other items within 40m
+    -- НАПРАВЛЕННЫЙ предмет - РАЗРЕШЕН в Friend Safe Mode!
     if not blockSyncItems and enemiesForLaser >= 1 then
         local laserItem = FindAoEItem("Laser Cape")
         if laserItem and not IsToolOnCooldown(laserItem) then
@@ -3081,9 +3296,10 @@ local function CheckAndUseAoEItems()
     
     -- Try Rage Table (priority 8, independent cooldown) - need 1+ enemies within 25 studs
     -- АСИНХРОННЫЙ: запускается когда нет других асинхронных предметов
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
     -- DEBUG: проверяем почему не используется
     local rageTableItem = FindAoEItem("Rage Table")
-    if rageTableItem then
+    if rageTableItem and not friendSafeBlockAoE then
         if enemiesForRageTable < 1 then
             -- LogItem("Rage Table", "SKIP", "no enemies in range")
         elseif AoEState.AsyncItemLock then
@@ -3115,7 +3331,8 @@ local function CheckAndUseAoEItems()
     -- Try Ban Hammer (priority 10) - need 1+ enemies within 10 studs
     -- АСИНХРОННЫЙ: требует Charge + Release через ActionController
     -- НЕ используется для турелей - только против игроков
-    if not hasTeleportedSentry and enemiesForBanHammer >= 1 then
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
+    if not hasTeleportedSentry and not friendSafeBlockAoE and enemiesForBanHammer >= 1 then
         local banHammerItem = CachedBanHammer or FindAoEItem("Ban Hammer")
         if banHammerItem then
             if AoEState.AsyncItemLock then
@@ -3150,9 +3367,10 @@ local function CheckAndUseAoEItems()
     end
     
     -- Try Heatseeker (priority 11) - только если нет других асинхронных
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
     -- DEBUG: проверяем почему не используется
     local heatseekerItem = FindAoEItem("Heatseeker")
-    if heatseekerItem then
+    if heatseekerItem and not friendSafeBlockAoE then
         if enemiesForHeatseeker < 1 then
             -- LogItem("Heatseeker", "SKIP", "no enemies in range")
         elseif AoEState.AsyncItemLock then
@@ -3183,8 +3401,11 @@ local function CheckAndUseAoEItems()
     
     -- Try Attack Doge (priority 12) - только если нет других асинхронных
     -- DEBUG: проверяем почему не используется
+    -- Try Attack Doge (priority 12) - только если нет других асинхронных
+    -- AoE ПРЕДМЕТ - ЗАБЛОКИРОВАН в Friend Safe Mode!
+    -- DEBUG: проверяем почему не используется
     local attackDogeItem = FindAoEItem("Attack Doge")
-    if attackDogeItem then
+    if attackDogeItem and not friendSafeBlockAoE then
         if enemiesForAttackDoge < 1 then
             -- LogItem("Attack Doge", "SKIP", "no enemies in range")
         elseif AoEState.AsyncItemLock then
@@ -6260,6 +6481,11 @@ local function KillauraLoop()
     end
     
     -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE: Обновляем состояние и бим к другу
+    -- ═══════════════════════════════════════════════════════════════════════
+    UpdateFriendBeam()
+    
+    -- ═══════════════════════════════════════════════════════════════════════
     -- АВТО-ВКЛЮЧЕНИЕ ПРИ ВОРЕ СВОЕЙ БАЗЫ (не друга)
     -- ═══════════════════════════════════════════════════════════════════════
     if ThiefPriorityEnabled and Config.AutoEnableOnThief then
@@ -6426,7 +6652,16 @@ local function KillauraLoop()
     
     -- Сферы уже обновлены выше (до проверки Config.Enabled)
     
-    -- Определяем есть ли враг в БОЕВОМ радиусе (45м для перчаток)
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE: Определяем эффективный радиус для боя
+    -- При друге в 50м - атакуем перчатками только в радиусе 10м
+    -- ═══════════════════════════════════════════════════════════════════════
+    local effectiveCombatRadius = 45  -- Стандартный радиус
+    if Config.FriendSafeMode and FriendSafeState.FullRestriction then
+        effectiveCombatRadius = FRIEND_CLOSE_COMBAT_RADIUS  -- 10м при друге в 50м
+    end
+    
+    -- Определяем есть ли враг в БОЕВОМ радиусе
     local hasCombatTarget = false
     local character = LocalPlayer.Character
     if target and character then
@@ -6435,7 +6670,7 @@ local function KillauraLoop()
             local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
                 local dist = (rootPart.Position - targetRoot.Position).Magnitude
-                hasCombatTarget = (dist <= 45)
+                hasCombatTarget = (dist <= effectiveCombatRadius)
             end
         end
     end
@@ -6522,20 +6757,28 @@ local function KillauraLoop()
         local isMyBaseThiefTarget = IsMyBaseThief(target)
         local isThief = IsBrainrotThief(target)
         
+        -- FRIEND SAFE MODE: Добавляем индикатор режима
+        local friendSafePrefix = ""
+        if Config.FriendSafeMode and FriendSafeState.FullRestriction then
+            friendSafePrefix = "[SAFE-50] "  -- Полное ограничение
+        elseif Config.FriendSafeMode and FriendSafeState.AoEDisabled then
+            friendSafePrefix = "[SAFE-100] "  -- Только AoE выключены
+        end
+        
         if isMyBaseThiefTarget then
             -- Вор моей базы - АБСОЛЮТНЫЙ приоритет!
             local myBaseThief = FindMyBaseThief()
             local brainrotInfo = myBaseThief and myBaseThief.brainrotName or "???"
-            StatusText = "🏠 МОЯ БАЗА: " .. target.Name .. " [" .. brainrotInfo .. "]"
+            StatusText = friendSafePrefix .. "🏠 МОЯ БАЗА: " .. target.Name .. " [" .. brainrotInfo .. "]"
         elseif isThief then
             -- Вор лучшего brainrot - приоритетная цель!
             local thief = FindBrainrotThief()
             local brainrotInfo = thief and thief.brainrotName or "???"
-            StatusText = "🚨 ВОР: " .. target.Name .. " [" .. brainrotInfo .. "]"
+            StatusText = friendSafePrefix .. "🚨 ВОР: " .. target.Name .. " [" .. brainrotInfo .. "]"
         elseif enemyCount > 1 then
-            StatusText = "Цель: " .. target.Name .. " (" .. enemyCount .. " врагов)"
+            StatusText = friendSafePrefix .. "Цель: " .. target.Name .. " (" .. enemyCount .. " врагов)"
         else
-            StatusText = "Цель: " .. target.Name
+            StatusText = friendSafePrefix .. "Цель: " .. target.Name
         end
         
         -- Check if we have a tool equipped
@@ -6567,10 +6810,18 @@ local function KillauraLoop()
             end
         end
         
-        -- Only equip tool if target is within 45m (glove range)
+        -- ═══════════════════════════════════════════════════════════════════════
+        -- FRIEND SAFE MODE: При полном ограничении (друг в 50м) - атакуем только в радиусе 10м
+        -- ═══════════════════════════════════════════════════════════════════════
+        local effectiveGloveRange = 45  -- Стандартный радиус перчаток
+        if Config.FriendSafeMode and FriendSafeState.FullRestriction then
+            effectiveGloveRange = FRIEND_CLOSE_COMBAT_RADIUS  -- Только 10м при друге в 50м
+        end
+        
+        -- Only equip tool if target is within effective range (glove range)
         -- НЕ переключаем инструменты только если используется SYNC AoE
         -- AoEState.AsyncItemLock НЕ блокирует - async предметы работают параллельно
-        if not AoEState.IsUsingAoEItem and Config.AutoEquipTool and not EquippedTool and distanceToTarget <= 45 then
+        if not AoEState.IsUsingAoEItem and Config.AutoEquipTool and not EquippedTool and distanceToTarget <= effectiveGloveRange then
             local tool = FindBestTool()
             if tool then
                 local equipped = EquipTool(tool)
@@ -6579,8 +6830,8 @@ local function KillauraLoop()
                     task.wait(0.05) -- Small delay after equipping
                 end
             end
-        elseif not AoEState.IsUsingAoEItem and distanceToTarget > 45 then
-            -- Unequip if target is beyond 45m (ТОЛЬКО если не используем sync AoE)
+        elseif not AoEState.IsUsingAoEItem and distanceToTarget > effectiveGloveRange then
+            -- Unequip if target is beyond effective range (ТОЛЬКО если не используем sync AoE)
             if character and EquippedTool then
                 local humanoid = character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
@@ -6590,8 +6841,12 @@ local function KillauraLoop()
             end
         end
         
-        -- Rotate to target (locked-in)
-        RotateToTarget(target)
+        -- Rotate to target (locked-in) - но только если враг в радиусе атаки
+        if distanceToTarget <= effectiveGloveRange then
+            RotateToTarget(target)
+        else
+            StopRotation()
+        end
         
         -- Skip attacking ONLY if SYNCHRONOUS AoE item is being used
         -- Асинхронные предметы (Rage Table, Heatseeker, Attack Doge) НЕ блокируют атаку
@@ -6599,8 +6854,11 @@ local function KillauraLoop()
             return
         end
         
-        -- Attack target
-        AttackTarget(target)
+        -- FRIEND SAFE MODE: Атакуем только если враг в эффективном радиусе
+        if distanceToTarget <= effectiveGloveRange then
+            -- Attack target
+            AttackTarget(target)
+        end
     else
         -- Нет врагов в боевом радиусе и нет турелей - стандартное поведение
         -- НЕ снимаем инструмент только если используется sync AoE
@@ -6968,7 +7226,7 @@ local function CreateGUI()
     -- Enemies counter (нижняя часть)
     local enemyCounter = Instance.new("TextLabel")
     enemyCounter.Name = "EnemyCounter"
-    enemyCounter.Size = UDim2.new(0.5, -5, 0, 16)
+    enemyCounter.Size = UDim2.new(0.3, -5, 0, 16)  -- Уменьшаем для переключателя
     enemyCounter.Position = UDim2.new(0, 0, 1, -20)
     enemyCounter.BackgroundTransparency = 1
     enemyCounter.Font = Enum.Font.GothamBold
@@ -6978,11 +7236,31 @@ local function CreateGUI()
     enemyCounter.TextXAlignment = Enum.TextXAlignment.Left
     enemyCounter.Parent = content
     
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE TOGGLE (слева от кнопки Friends)
+    -- ═══════════════════════════════════════════════════════════════════════
+    local friendSafeToggle = Instance.new("TextButton")
+    friendSafeToggle.Name = "FriendSafeToggle"
+    friendSafeToggle.Size = UDim2.new(0, 20, 0, 16)
+    friendSafeToggle.Position = UDim2.new(0.3, 0, 1, -20)
+    friendSafeToggle.BackgroundColor3 = Config.FriendSafeMode and Colors.AccentGreen or Colors.BackgroundLight
+    friendSafeToggle.BorderSizePixel = 0
+    friendSafeToggle.Font = Enum.Font.GothamBold
+    friendSafeToggle.Text = Config.FriendSafeMode and "S" or "-"
+    friendSafeToggle.TextColor3 = Colors.Text
+    friendSafeToggle.TextSize = 9
+    friendSafeToggle.AutoButtonColor = false
+    friendSafeToggle.Parent = content
+    
+    local friendSafeCorner = Instance.new("UICorner")
+    friendSafeCorner.CornerRadius = UDim.new(0, 4)
+    friendSafeCorner.Parent = friendSafeToggle
+    
     -- Friends button (открывает окно френд-листа)
     local friendsButton = Instance.new("TextButton")
     friendsButton.Name = "FriendsButton"
-    friendsButton.Size = UDim2.new(0.5, -5, 0, 16)
-    friendsButton.Position = UDim2.new(0.5, 5, 1, -20)
+    friendsButton.Size = UDim2.new(0.5, -30, 0, 16)  -- Уменьшаем для переключателя
+    friendsButton.Position = UDim2.new(0.3, 25, 1, -20)
     friendsButton.BackgroundColor3 = Colors.AccentBlue
     friendsButton.BackgroundTransparency = 0.3
     friendsButton.BorderSizePixel = 0
@@ -7354,6 +7632,38 @@ local function CreateGUI()
     
     -- Initial update
     UpdateFriendButtonText()
+    
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- FRIEND SAFE MODE TOGGLE HANDLER
+    -- ═══════════════════════════════════════════════════════════════════════
+    friendSafeToggle.MouseButton1Click:Connect(function()
+        Config.FriendSafeMode = not Config.FriendSafeMode
+        
+        if Config.FriendSafeMode then
+            friendSafeToggle.BackgroundColor3 = Colors.AccentGreen
+            friendSafeToggle.Text = "S"
+        else
+            friendSafeToggle.BackgroundColor3 = Colors.BackgroundLight
+            friendSafeToggle.Text = "-"
+            -- Удаляем бим к другу если режим выключен
+            RemoveFriendBeam()
+        end
+        
+        SaveConfig()
+    end)
+    
+    -- Hover эффект для Friend Safe Toggle
+    friendSafeToggle.MouseEnter:Connect(function()
+        if not Config.FriendSafeMode then
+            friendSafeToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+        end
+    end)
+    
+    friendSafeToggle.MouseLeave:Connect(function()
+        if not Config.FriendSafeMode then
+            friendSafeToggle.BackgroundColor3 = Colors.BackgroundLight
+        end
+    end)
     
     -- ═══════════════════════════════════════════════════════════════════════
     -- ФУНКЦИОНАЛЬНОСТЬ
